@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 contract CrowdFund is IERC721Receiver {
+    
+    //Events
     event Launch(
         uint256 id,
         address indexed creator,
@@ -30,6 +32,13 @@ contract CrowdFund is IERC721Receiver {
         address indexed caller
     );
 
+    //State variables
+    enum Status{
+        Open,
+        Success,
+        EndedUnsuccess
+    }
+
     address public creator;
     uint256 public goal;
     uint256 public pledged = 0;
@@ -38,6 +47,8 @@ contract CrowdFund is IERC721Receiver {
     bool started;
     bool public ended;
     bool public success;
+    Status status;
+
 
     struct Nft {
         address donator;
@@ -49,6 +60,7 @@ contract CrowdFund is IERC721Receiver {
 
     mapping(uint256 => bool) public nftsClaimed;
 
+    //Modifiers
     modifier onlyCreator() {
         require(creator == msg.sender, "not creator");
         _;
@@ -66,18 +78,21 @@ contract CrowdFund is IERC721Receiver {
         _;
     }
 
-    constructor(uint256 _goal, uint256 _endAt) {
+
+    constructor(uint256 _goal, uint256 _endIn) {
         creator = msg.sender;
         goal = _goal;
-        endAt = block.timestamp + _endAt;
-        started = true;
+        endAt = block.timestamp + (_endIn * 60);
+        status = Status.Open;
     }
 
     // Pledge NFT to crowdfund
+        //Give approval to the contract before calling the function
     function pledge(uint256 tokenId, address _contractAddress) external {
         require(_contractAddress != address(0), "not valid contract");
-        require(!ended, "ended");
-        require(block.timestamp < endAt, "over");
+        require(msg.sender != creator, "Creator cannot pleadge");
+        require(status == Status.open, "ended");
+        require(block.timestamp < endAt, "Time period is over");
 
         IERC721(_contractAddress).transferFrom(
             msg.sender,
@@ -92,7 +107,7 @@ contract CrowdFund is IERC721Receiver {
     // Unpledge NFT from crowdfund
     function unpledge(uint256 _id) external onlyDonator(_id) {
         Nft storage nft = nftsPledged[_id];
-        require(!ended, "ended");
+        require(status == Status.Open, "ended");
         IERC721(nft.contractAddress).transferFrom(
             address(this),
             msg.sender,
@@ -108,18 +123,16 @@ contract CrowdFund is IERC721Receiver {
 
     function end() external onlyCreator {
         require(block.timestamp > endAt, "not over");
-        require(!ended, "ended");
+        require(status = Status.Open, "ended");
         claimed = true;
-        ended = true;
+        status = Status.EndedUnsuccess;
         endAt = 0;
         started = false;
         // success is true only if goal is reached or exceeded
         if (pledged >= goal) {
-            success = true;
-        } else {
-            success = false;
-        }
-        emit End();
+            status = Status.Success ;
+        } 
+        End();
     }
 
     // withdraw NFT if crowdfund is not a success
@@ -128,8 +141,7 @@ contract CrowdFund is IERC721Receiver {
         onlyDonator(_id)
         onlyNotClaimed(_id)
     {
-        require(!success, "is successful");
-        require(ended, "not ended");
+        require(status == Status.EndedUnsuccess, "is successful");
         IERC721(nftsPledged[_id].contractAddress).transferFrom(
             address(this),
             msg.sender,
@@ -144,8 +156,7 @@ contract CrowdFund is IERC721Receiver {
 
     // Creator can claim pledged NFTs
     function claimNft(uint256 _id) external onlyCreator onlyNotClaimed(_id) {
-        require(success, "was not successful");
-        require(ended, "not ended");
+        require(status == Status.Success, "Not sucessful");
         IERC721(nftsPledged[_id].contractAddress).transferFrom(
             address(this),
             creator,
